@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /> <!--让网页在移动设备上能够自适应屏幕宽度-->
     <title>WebRTC demo</title>
     <style>
     button {
@@ -29,9 +29,21 @@
 </head>
 <body>
 
+
 <h2>Options</h2>
 <div class="option">
-    <input id="use-datachannel" checked="checked" type="checkbox"/>
+    <label for="send-mode">发送模式：</label> <!--for来将这个显示“发送模式：”的label连接到下面id=send-mode的元素-->
+    <select id="send-mode">
+        <option value="echo">服务器回显</option>
+        <option value="peer">点对点通信</option>
+    </select>
+</div>
+<div class="option">
+    <label for="user-name">昵称：</label>
+    <input id="user-name" type="text" placeholder="输入你的昵称"> <!--输入id区域-->
+</div>
+<div class="option">
+    <input id="use-datachannel" checked="checked" type="checkbox"/> <!--checked属性表示默认选中这个复选框-->
     <label for="use-datachannel">Use datachannel</label>
     <select id="datachannel-parameters">
         <option value='{"ordered": true}'>Ordered, reliable</option>
@@ -40,10 +52,10 @@
     </select>
 </div>
 <div class="option">
-    <input id="use-audio" checked="checked" type="checkbox"/>
+    <input id="use-audio" type="checkbox"/>
     <label for="use-audio">Use audio</label>
     <select id="audio-input">
-        <option value="" selected>Default device</option>
+        <option value="" selected>Default device</option><!--选择默认设备-->
     </select>
     <select id="audio-codec">
         <option value="default" selected>Default codecs</option>
@@ -82,48 +94,74 @@
     <input id="use-stun" type="checkbox"/>
     <label for="use-stun">Use STUN server</label>
 </div>
+<div class="option">
+    <input id="use-turn" type="checkbox"/>
+    <label for="use-turn">Use TURN server</label>
+</div>
 
 <button id="start" onclick="start()">Start</button>
 <button id="stop" style="display: none" onclick="stop()">Stop</button>
 
-<h2>State</h2>
-<p>
-    ICE gathering state: <span id="ice-gathering-state"></span>
-</p>
-<p>
-    ICE connection state: <span id="ice-connection-state"></span>
-</p>
-<p>
-    Signaling state: <span id="signaling-state"></span>
-</p>
-
-<div id="media" style="display: none">
-    <h2>Media</h2>
-
-    <audio id="audio" autoplay="true"></audio>
-    <video id="video" autoplay="true" playsinline="true"></video>
+<div id="user-list-area" style="display:none;">
+    <h2>在线用户</h2>
+    <ul id="user-list"></ul>    <!--无序列表，可在js中进行增加用户-->
 </div>
 
-<h2>Data channel</h2>
-<pre id="data-channel" style="height: 200px;"></pre>
+<div id="main-content" style="display:none;">
+    <h2>State</h2>
+    <p>   <!-- p标签用于定义段落 -->
+        ICE gathering state: <span id="ice-gathering-state"></span> <!--这是一个内联元素，带有唯一的id属性。它本身没有内容，通常用于通过JavaScript动态插入或更新内容。-->
+    </p>
+    <p>
+        ICE connection state: <span id="ice-connection-state"></span>
+    </p>
+    <p>
+        Signaling state: <span id="signaling-state"></span>
+    </p>
 
-<h2>Comporation Data</h2>
-<div>
-    <input id="data-input" type="text" placeholder="Enter data to send" style="width:60%">
-    <button onclick="sendCustomData()">Send Data</button>
+    <div id="media" style="display: none">
+        <h2>Media</h2>
+        <audio id="audio" autoplay="true"></audio>
+        <video id="video" autoplay="true" playsinline="true"></video>
+    </div>
+
+
+    <h2>Channel Log</h2>
+    <pre id="data-channel" style="height: 200px;"></pre>
+
+    <h2>Input</h2>
+    <div>
+        <input id="data-input" type="text" placeholder="Enter data to send" style="width:60%">
+        <button onclick="sendCustomData()">Send Data</button>
+    </div>
+    <h3>Chat Data</h3>
+    <pre id="chat-data" style="height: 300px;"></pre>
+
+    <h2>SDP</h2>
+    <h3>Offer</h3>
+    <pre id="offer-sdp"></pre>
+    <h3>Answer</h3>
+    <pre id="answer-sdp"></pre>
 </div>
-<p>Sent: <span id="data-sent"></span></p>
-<p>Received: <span id="data-received"></span></p>
-
-
-<h2>SDP</h2>
-
-<h3>Offer</h3>
-<pre id="offer-sdp"></pre>
-
-<h3>Answer</h3>
-<pre id="answer-sdp"></pre>
 
 <script src="client.js"></script>
+<!-- 选择echo模式时，隐藏userId部分的内容 -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const sendMode = document.getElementById('send-mode');
+    const userNameDiv = document.querySelector('.option label[for="user-name"]').parentElement;
+
+    function toggleUserName() {
+        if (sendMode.value === 'echo') {
+            userNameDiv.style.display = 'none';
+        } else {
+            userNameDiv.style.display = '';
+        }
+    }
+
+    sendMode.addEventListener('change', toggleUserName);
+    toggleUserName(); // 页面加载时也执行一次
+});
+</script>
 </body>
 </html>

@@ -7,41 +7,40 @@ import ssl
 import uuid
 
 import cv2
-from aiohttp import web
+from aiohttp import web, WSMsgType
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
+from aiortc.contrib.media import MediaBlackhole, MediaRecorder, MediaRelay
 from av import VideoFrame
 
 ROOT = os.path.dirname(__file__)
 
 logger = logging.getLogger("pc")
-pcs = set()
-relay = MediaRelay()
+pcs = set() #一个集合，用于存储所有活跃的 RTCPeerConnection 实例，方便统一管理和清理
+relay = MediaRelay()  #MediaRelay 实例，用于将一个媒体流（如摄像头视频）转发给多个client，避免重复读取源流
+
+users = {}  # user_id: {'ws': ws, 'name': name} dir字典
 
 
-class VideoTransformTrack(MediaStreamTrack):
-    """
-    A video stream track that transforms frames from an another track.
-    """
-
+class VideoTransformTrack(MediaStreamTrack):  #继承 MediaStreamTrack 类，用于处理视频流
+    
     kind = "video"
 
     def __init__(self, track, transform):
         super().__init__()  # don't forget this!
-        self.track = track
+        self.track = track 
         self.transform = transform
 
-    async def recv(self):
+    async def recv(self):  #接受视频帧并进行处理
         frame = await self.track.recv()
 
         if self.transform == "cartoon":
             img = frame.to_ndarray(format="bgr24")
 
             # prepare color
-            img_color = cv2.pyrDown(cv2.pyrDown(img))
+            img_color = cv2.pyrDown(cv2.pyrDown(img)) # downsample the image
             for _ in range(6):
                 img_color = cv2.bilateralFilter(img_color, 9, 9, 7)
-            img_color = cv2.pyrUp(cv2.pyrUp(img_color))
+            img_color = cv2.pyrUp(cv2.pyrUp(img_color)) # upsample the image
 
             # prepare edges
             img_edges = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -89,6 +88,7 @@ class VideoTransformTrack(MediaStreamTrack):
             return frame
 
 
+#向client发送web页面的html代码和JavaScript脚本
 async def index(request):
     content = open(os.path.join(ROOT, "index.html"), "r", encoding="utf-8").read()
     return web.Response(content_type="text/html", text=content)
@@ -98,7 +98,7 @@ async def javascript(request):
     content = open(os.path.join(ROOT, "client.js"), "r", encoding="utf-8").read()
     return web.Response(content_type="application/javascript", text=content)
 
-
+#处理客户端发送的offer请求，创建RTCPeerConnection实例，并设置媒体流
 async def offer(request):
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
@@ -111,14 +111,13 @@ async def offer(request):
         logger.info(pc_id + " " + msg, *args)
 
     log_info("Created for %s", request.remote)
-
-    # prepare local media
-    player = MediaPlayer(os.path.join(ROOT, "demo-instruct.wav"))
+    
     if args.record_to:
         recorder = MediaRecorder(args.record_to)
     else:
         recorder = MediaBlackhole()
-
+    
+    #server收到自定义data后，发还给client
     @pc.on("datachannel")
     def on_datachannel(channel):
         @channel.on("message")
@@ -127,8 +126,9 @@ async def offer(request):
             if isinstance(message, str) and message.startswith("[custom]"):
                 channel.send(message)
             elif isinstance(message, str) and message.startswith("ping"):
-                channel.send("pong" + message[4:])
+                channel.send("pong" + message[18:])
 
+    #如果pc连接状态发生变化，打印日志并在连接失败时关闭连接
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         log_info("Connection state is %s", pc.connectionState)
@@ -136,13 +136,17 @@ async def offer(request):
             await pc.close()
             pcs.discard(pc)
 
+    #处理echo模式的音频和视频流，并发送回客户端
     @pc.on("track")
     def on_track(track):
         log_info("Track %s received", track.kind)
 
         if track.kind == "audio":
-            pc.addTrack(player.audio)
-            recorder.addTrack(track)
+            #pc.addTrack(player.audio)
+            #recorder.addTrack(track)
+            pc.addTrack(relay.subscribe(track))
+            if args.record_to:
+                recorder.addTrack(relay.subscribe(track))
         elif track.kind == "video":
             pc.addTrack(
                 VideoTransformTrack(
@@ -165,12 +169,72 @@ async def offer(request):
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
+    #发送offer相对应的answer给客户端
     return web.Response(
         content_type="application/json",
         text=json.dumps(
             {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
         ),
     )
+
+
+#处理WebSocket连接，管理用户连接和信令消息的转发
+async def ws_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    user_id = str(uuid.uuid4())
+    user_name = None
+
+    try:
+        async for msg in ws:
+            if msg.type == WSMsgType.TEXT:
+                data = json.loads(msg.data)
+                if data["type"] == "join":
+                    user_name = data["name"]
+                    users[user_id] = {"ws": ws, "name": user_name}
+                    # 告诉client端他自己的id
+                    await ws.send_json({"type": "self_id", "id": user_id})
+                    await broadcast_user_list()
+                elif data["type"] == "signal":
+                    # 转发信令消息到目标用户
+                    target_id = data["to"]
+                    if target_id in users:
+                        await users[target_id]["ws"].send_json(
+                            {"type": "signal", "from": user_id, "data": data["data"]}
+                        )
+                elif data["type"] == "peer_request":
+                    # 转发请求到目标用户
+                    target_id = data["to"]
+                    if target_id in users:
+                        await users[target_id]["ws"].send_json(
+                            {
+                                "type": "peer_request",
+                                "from": user_id,
+                                "fromName": users[user_id]["name"],
+                            }
+                        )
+                elif data["type"] == "peer_accept":
+                    # 通知发起方可以发offer
+                    target_id = data["to"]
+                    if target_id in users:
+                        await users[target_id]["ws"].send_json(
+                            {"type": "peer_accept", "from": user_id}
+                        )
+            elif msg.type == WSMsgType.ERROR:
+                print("ws connection closed with exception %s" % ws.exception())
+    finally:
+        # 用户离开
+        if user_id in users:
+            del users[user_id]
+            await broadcast_user_list()
+    return ws
+
+#广播用户列表给所有连接的用户
+async def broadcast_user_list():
+    user_list = [{"id": uid, "name": u["name"]} for uid, u in users.items()]
+    for u in users.values():
+        await u["ws"].send_json({"type": "user_list", "users": user_list})
 
 
 async def on_shutdown(app):
@@ -184,13 +248,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="WebRTC audio / video / data-channels demo"
     )
-    parser.add_argument("--cert-file", default=os.path.join(ROOT, "certificate", "server.crt"), help="SSL certificate file (for HTTPS)")
-    parser.add_argument("--key-file", default=os.path.join(ROOT, "certificate", "server.key"), help="SSL key file (for HTTPS)")
+
+    parser.add_argument("--cert-file", help="SSL certificate file (for HTTPS)")
+    parser.add_argument("--key-file", help="SSL key file (for HTTPS)")
+
+    #以下两行为公网部署的默认指定证书和密钥文件，删除注释后启用并使用https访问，会显示不安全
+    #parser.add_argument("--cert-file", default=os.path.join(ROOT, "certificate", "server.crt"), help="SSL certificate file (for HTTPS)")
+    #parser.add_argument("--key-file", default=os.path.join(ROOT, "certificate", "server.key"), help="SSL key file (for HTTPS)")
+
     parser.add_argument(
         "--host", default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)"
     )
     parser.add_argument(
-        "--port", type=int, default=4445, help="Port for HTTP server (default: 4445)"
+        "--port", type=int, default=8080, help="Port for HTTP server (default: 8080)"
     )
     parser.add_argument("--record-to", help="Write received media to a file.")
     parser.add_argument("--verbose", "-v", action="count")
@@ -212,6 +282,7 @@ if __name__ == "__main__":
     app.router.add_get("/", index)
     app.router.add_get("/client.js", javascript)
     app.router.add_post("/offer", offer)
+    app.router.add_get("/ws", ws_handler)
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context
     )
