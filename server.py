@@ -249,18 +249,18 @@ if __name__ == "__main__":
         description="WebRTC audio / video / data-channels demo"
     )
 
-    parser.add_argument("--cert-file", help="SSL certificate file (for HTTPS)")
-    parser.add_argument("--key-file", help="SSL key file (for HTTPS)")
+    #parser.add_argument("--cert-file", help="SSL certificate file (for HTTPS)")
+    #parser.add_argument("--key-file", help="SSL key file (for HTTPS)")
 
     #以下两行为公网部署的默认指定证书和密钥文件，删除注释后启用并使用https访问，会显示不安全
-    #parser.add_argument("--cert-file", default=os.path.join(ROOT, "certificate", "server.crt"), help="SSL certificate file (for HTTPS)")
-    #parser.add_argument("--key-file", default=os.path.join(ROOT, "certificate", "server.key"), help="SSL key file (for HTTPS)")
+    parser.add_argument("--cert-file", default=os.path.join(ROOT, "certificate", "server.crt"), help="SSL certificate file (for HTTPS)")
+    parser.add_argument("--key-file", default=os.path.join(ROOT, "certificate", "server.key"), help="SSL key file (for HTTPS)")
 
     parser.add_argument(
         "--host", default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)"
     )
     parser.add_argument(
-        "--port", type=int, default=8080, help="Port for HTTP server (default: 8080)"
+        "--port", type=int, default=4445, help="Port for HTTP server (default: 4445)"
     )
     parser.add_argument("--record-to", help="Write received media to a file.")
     parser.add_argument("--verbose", "-v", action="count")

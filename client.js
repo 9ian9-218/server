@@ -331,6 +331,21 @@ function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
+async function ensureDeviceAccessAndEnumerate() {
+    try {
+        // 请求权限（只要audio或video有一个被勾选即可）
+        await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    } catch (err) {
+        // 用户拒绝也可以继续，只是label会为空
+    }
+    enumerateInputDevices();
+}
+
+// 页面加载时调用
+document.addEventListener('DOMContentLoaded', function() {
+    ensureDeviceAccessAndEnumerate();
+});
+
 function startPeer() {//点对点通信模式
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onopen = function() {
@@ -396,7 +411,7 @@ function startPeer() {//点对点通信模式
     };
 }
 
-enumerateInputDevices();
+
 
 function start() {
     var mode = document.getElementById('send-mode').value;
@@ -549,3 +564,5 @@ async function getLocalStream() {
         return null;
     }
 }
+
+
