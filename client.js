@@ -123,14 +123,14 @@ function negotiate() {//实现client与server的协商（建立连接、交换SD
 
         document.getElementById('offer-sdp').textContent = offer.sdp;
         
-        return fetch('/offer', {//确定请求体内容是一个 JSON 字符串
+        return fetch('/offer', {
             body: JSON.stringify({
                 sdp: offer.sdp,
-                type: offer.type,
-                video_transform: document.getElementById('video-transform') ? document.getElementById('video-transform').value : ''
+                type: offer.type
+                // 删除 video_transform 字段
             }),
             headers: {
-                'Content-Type': 'application/json'//告诉服务器请求体是 JSON 格式
+                'Content-Type': 'application/json'
             },
             method: 'POST'
         });
@@ -347,10 +347,13 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function startPeer() {//点对点通信模式
-    ws = new WebSocket('ws://' + location.host + '/ws');
+    let wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    ws = new WebSocket(wsProtocol + location.host + '/ws');
     ws.onopen = function() {
         ws.send(JSON.stringify({type: 'join', name: myName}));
         document.getElementById('user-list-area').style.display = '';
+        document.getElementById('media').style.display = 'block'; // 确保媒体区域可见
+        document.getElementById('main-content').style.display = 'block'; // 确保主内容可见
     };
     ws.onmessage = function(event) {
         let msg = JSON.parse(event.data);
@@ -374,38 +377,38 @@ function startPeer() {//点对点通信模式
                         pc.addTrack(track, stream);
                     });
                 }
-            });
-            dc = pc.createDataChannel('chat');
-            dc.onopen = () => {
-                dataChannelLog.textContent += '- open\n';
-            };
-            dc.onclose = () => {
-                dataChannelLog.textContent += '- close\n';
-            };
-            dc.onmessage = (evt) => {
-                dataChannelLog.textContent += '< ' + evt.data +' '+ Date.now() + '\n';
-                document.getElementById('chat-data').textContent +='< ' + evt.data+' '+ Date.now()+'\n';
-            };
-            pc.onicecandidate = (event) => {
-                if (event.candidate) {
+                dc = pc.createDataChannel('chat');
+                dc.onopen = () => {
+                    dataChannelLog.textContent += '- open\n';
+                };
+                dc.onclose = () => {
+                    dataChannelLog.textContent += '- close\n';
+                };
+                dc.onmessage = (evt) => {
+                    dataChannelLog.textContent += '< ' + evt.data +' '+ Date.now() + '\n';
+                    document.getElementById('chat-data').textContent +='< ' + evt.data+' '+ Date.now()+'\n';
+                };
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        ws.send(JSON.stringify({
+                            type: 'signal',
+                            to: peerId,
+                            data: {type: 'candidate', candidate: event.candidate}
+                        }));
+                    }
+                };
+
+                //点击对方id后，通过websocket发送Offer给对应id的用户
+                pc.createOffer().then(offer => {
+                    document.getElementById('offer-sdp').textContent = offer.sdp; // 显示Offer
+                    return pc.setLocalDescription(offer);
+                }).then(() => {
                     ws.send(JSON.stringify({
                         type: 'signal',
                         to: peerId,
-                        data: {type: 'candidate', candidate: event.candidate}
+                        data: {type: 'offer', sdp: pc.localDescription}
                     }));
-                }
-            };
-
-            //点击对方id后，通过websocket发送Offer给对应id的用户
-            pc.createOffer().then(offer => {
-                document.getElementById('offer-sdp').textContent = offer.sdp; // 显示Offer
-                return pc.setLocalDescription(offer);
-            }).then(() => {
-                ws.send(JSON.stringify({
-                    type: 'signal',
-                    to: peerId,
-                    data: {type: 'offer', sdp: pc.localDescription}
-                }));
+                });
             });
         }
     };
@@ -441,6 +444,20 @@ function handleSignal(from, data) {
                     pc.addTrack(track, stream);
                 });
             }
+            // 必须在添加本地流后再 setRemoteDescription
+            pc.setRemoteDescription(new RTCSessionDescription(data.sdp)).then(() => {
+                document.getElementById('offer-sdp').textContent = data.sdp.sdp; // 显示对方Offer
+                return pc.createAnswer();
+            }).then(answer => {
+                document.getElementById('answer-sdp').textContent = answer.sdp; // 显示本地Answer
+                return pc.setLocalDescription(answer);
+            }).then(() => {
+                ws.send(JSON.stringify({
+                    type: 'signal',
+                    to: peerId,
+                    data: {type: 'answer', sdp: pc.localDescription}
+                }));
+            });
         });
         pc.ondatachannel = (event) => {
             dc = event.channel;
@@ -466,21 +483,6 @@ function handleSignal(from, data) {
                 }));
             }
         };
-        //收到建联消息，设置对方为远端描述并创建 Answer通过WebSocket发送给对方
-        pc.setRemoteDescription(new RTCSessionDescription(data.sdp)).then(() => {
-            document.getElementById('offer-sdp').textContent = data.sdp.sdp; // 显示对方Offer
-            return pc.createAnswer();
-        }).then(answer => {
-            document.getElementById('answer-sdp').textContent = answer.sdp; // 显示本地Answer
-            return pc.setLocalDescription(answer);
-        }).then(() => {
-            ws.send(JSON.stringify({
-                type: 'signal',
-                to: peerId,
-                data: {type: 'answer', sdp: pc.localDescription}
-            }));
-        });
-
     // 如果是Answer则设置其远端描述，此时peerconnection已经建立
     } else if (data.type === 'answer') {
         document.getElementById('answer-sdp').textContent = data.sdp.sdp; // 显示对方Answer
@@ -548,13 +550,7 @@ async function getLocalStream() {
     if (constraints.audio || constraints.video) {
         try {
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-            // transform 处理（如美颜/特效）
-            const transform = document.getElementById('video-transform')?.value;
-            if (constraints.video && transform && transform !== 'none') {
-                const transformedStream = await applyVideoTransform(stream, transform);
-                return transformedStream;
-            }
+            // 删除 transform 相关注释和代码
             return stream;
         } catch (err) {
             alert('无法获取音视频流: ' + err);
@@ -564,5 +560,3 @@ async function getLocalStream() {
         return null;
     }
 }
-
-

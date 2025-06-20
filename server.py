@@ -16,76 +16,21 @@ ROOT = os.path.dirname(__file__)
 
 logger = logging.getLogger("pc")
 pcs = set() #一个集合，用于存储所有活跃的 RTCPeerConnection 实例，方便统一管理和清理
-relay = MediaRelay()  #MediaRelay 实例，用于将一个媒体流（如摄像头视频）转发给多个client，避免重复读取源流
+relay = MediaRelay()  
 
 users = {}  # user_id: {'ws': ws, 'name': name} dir字典
 
 
 class VideoTransformTrack(MediaStreamTrack):  #继承 MediaStreamTrack 类，用于处理视频流
-    
     kind = "video"
 
-    def __init__(self, track, transform):
-        super().__init__()  # don't forget this!
-        self.track = track 
-        self.transform = transform
+    def __init__(self, track):
+        super().__init__()
+        self.track = track
 
     async def recv(self):  #接受视频帧并进行处理
         frame = await self.track.recv()
-
-        if self.transform == "cartoon":
-            img = frame.to_ndarray(format="bgr24")
-
-            # prepare color
-            img_color = cv2.pyrDown(cv2.pyrDown(img)) # downsample the image
-            for _ in range(6):
-                img_color = cv2.bilateralFilter(img_color, 9, 9, 7)
-            img_color = cv2.pyrUp(cv2.pyrUp(img_color)) # upsample the image
-
-            # prepare edges
-            img_edges = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            img_edges = cv2.adaptiveThreshold(
-                cv2.medianBlur(img_edges, 7),
-                255,
-                cv2.ADAPTIVE_THRESH_MEAN_C,
-                cv2.THRESH_BINARY,
-                9,
-                2,
-            )
-            img_edges = cv2.cvtColor(img_edges, cv2.COLOR_GRAY2RGB)
-
-            # combine color and edges
-            img = cv2.bitwise_and(img_color, img_edges)
-
-            # rebuild a VideoFrame, preserving timing information
-            new_frame = VideoFrame.from_ndarray(img, format="bgr24")
-            new_frame.pts = frame.pts
-            new_frame.time_base = frame.time_base
-            return new_frame
-        elif self.transform == "edges":
-            # perform edge detection
-            img = frame.to_ndarray(format="bgr24")
-            img = cv2.cvtColor(cv2.Canny(img, 100, 200), cv2.COLOR_GRAY2BGR)
-
-            # rebuild a VideoFrame, preserving timing information
-            new_frame = VideoFrame.from_ndarray(img, format="bgr24")
-            new_frame.pts = frame.pts
-            new_frame.time_base = frame.time_base
-            return new_frame
-        elif self.transform == "rotate":
-            # rotate image
-            img = frame.to_ndarray(format="bgr24")
-            rows, cols, _ = img.shape
-            M = cv2.getRotationMatrix2D((cols / 2, rows / 2), frame.time * 45, 1)
-            img = cv2.warpAffine(img, M, (cols, rows))
-
-            # rebuild a VideoFrame, preserving timing information
-            new_frame = VideoFrame.from_ndarray(img, format="bgr24")
-            new_frame.pts = frame.pts
-            new_frame.time_base = frame.time_base
-            return new_frame
-        else:
-            return frame
+        return frame
 
 
 #向client发送web页面的html代码和JavaScript脚本
@@ -142,15 +87,13 @@ async def offer(request):
         log_info("Track %s received", track.kind)
 
         if track.kind == "audio":
-            #pc.addTrack(player.audio)
-            #recorder.addTrack(track)
             pc.addTrack(relay.subscribe(track))
             if args.record_to:
                 recorder.addTrack(relay.subscribe(track))
         elif track.kind == "video":
             pc.addTrack(
                 VideoTransformTrack(
-                    relay.subscribe(track), transform=params["video_transform"]
+                    relay.subscribe(track)
                 )
             )
             if args.record_to:
@@ -260,7 +203,7 @@ if __name__ == "__main__":
         "--host", default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)"
     )
     parser.add_argument(
-        "--port", type=int, default=4445, help="Port for HTTP server (default: 4445)"
+        "--port", type=int, default=8080, help="Port for HTTP server (default: 4445)"
     )
     parser.add_argument("--record-to", help="Write received media to a file.")
     parser.add_argument("--verbose", "-v", action="count")
